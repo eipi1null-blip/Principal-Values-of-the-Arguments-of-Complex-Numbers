@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Argument of a Complex Number</title>
+  <style>
+    :root {
+      --blue: #254a9a;
+      --purple: #6b3fa0;
+      --pink: #d63d73;
+      --ink: #3e3e44;
+      --grid: #d7d7d7;
+      --panel: #eef3fb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #f7f8fb;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: var(--ink);
+    }
+    .applet {
+      width: min(1220px, 100vw);
+      min-height: 100vh;
+      margin: 0 auto;
+      background: #fff;
+      border: 2px solid #8c8c8c;
+      display: grid;
+      grid-template-rows: minmax(480px, 1fr) auto;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      min-height: 520px;
+      background: #fff;
+      touch-action: none;
+    }
+    .readout {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      padding: 16px 18px 18px;
+      border-top: 2px solid #cad2e2;
+      background: var(--panel);
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #cfd6e5;
+      border-radius: 8px;
+      padding: 12px 14px;
+      min-height: 92px;
+    }
+    .label {
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      color: #687086;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .value {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(22px, 2.3vw, 32px);
+      font-weight: 800;
+      color: var(--ink);
+      line-height: 1.25;
+    }
+    .frac {
+      display: inline-grid;
+      grid-template-rows: auto auto;
+      align-items: center;
+      justify-items: center;
+      vertical-align: middle;
+      line-height: 1;
+      margin: 0 .08em;
+    }
+    .frac span:first-child {
+      border-bottom: 2px solid currentColor;
+      padding: 0 .18em .08em;
+    }
+    .frac span:last-child {
+      padding-top: .08em;
+    }
+    .note {
+      font-size: 16px;
+      line-height: 1.38;
+      color: #4b4f5b;
+    }
+    .purple { color: var(--purple); }
+    .pink { color: var(--pink); }
+    .blue { color: var(--blue); }
+    @media (max-width: 840px) {
+      .applet { grid-template-rows: minmax(430px, 1fr) auto; }
+      .readout { grid-template-columns: 1fr 1fr; }
+      canvas { min-height: 460px; }
+    }
+    @media (max-width: 560px) {
+      .readout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="applet">
+    <canvas id="plane" aria-label="Complex plane with draggable point showing arctangent and argument"></canvas>
+    <section class="readout" aria-live="polite">
+      <div class="card">
+        <div class="label">Complex Number</div>
+        <div id="zValue" class="value purple"></div>
+      </div>
+      <div class="card">
+        <div class="label">Plain Arctangent</div>
+        <div id="atanValue" class="value"></div>
+      </div>
+      <div class="card">
+        <div class="label">Argument</div>
+        <div id="argValue" class="value pink"></div>
+      </div>
+      <div class="card">
+        <div class="label">Quadrant Rule</div>
+        <div id="ruleValue" class="note"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("plane");
+    const ctx = canvas.getContext("2d");
+    const zValue = document.getElementById("zValue");
+    const atanValue = document.getElementById("atanValue");
+    const argValue = document.getElementById("argValue");
+    const ruleValue = document.getElementById("ruleValue");
+
+    const state = {
+      point: { x: 3.62, y: 1.96 },
+      dragging: false,
+      xMin: -5.5,
+      xMax: 6.2,
+      yMin: -3.4,
+      yMax: 3.4
+    };
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+    function deg(rad) { return rad * 180 / Math.PI; }
+    function rad(degrees) { return degrees * Math.PI / 180; }
+    function fmt(v, digits = 2) {
+      if (!Number.isFinite(v)) return "undefined";
+      const s = v.toFixed(digits);
+      return s.replace(/-0\.00/, "0.00");
+    }
+    function angleText(v) {
+      if (!Number.isFinite(v)) return "undefined";
+      return fmt(v) + "°";
+    }
+    function radText(v) {
+      if (!Number.isFinite(v)) return "undefined";
+      return fmt(v, 3) + " rad";
+    }
+    function fractionHTML(top, bottom) {
+      return '<span class="frac"><span>' + top + '</span><span>' + bottom + '</span></span>';
+    }
+    function quadrantCorrection(x, y) {
+      if (Math.abs(x) < 1e-6 || Math.abs(y) < 1e-6 || x > 0) {
+        return { degrees: 0, radians: 0, labelDeg: "", labelRad: "", phrase: "" };
+      }
+      if (x < 0 && y >= 0) {
+        return { degrees: 180, radians: Math.PI, labelDeg: "+180°", labelRad: "+π", phrase: "add 180° / add π" };
+      }
+      return { degrees: -180, radians: -Math.PI, labelDeg: "-180°", labelRad: "-π", phrase: "subtract 180° / subtract π" };
+    }
+    function complexText(x, y) {
+      const sign = y < 0 ? " - " : " + ";
+      return fmt(x) + sign + fmt(Math.abs(y)) + "i";
+    }
+    function size() {
+      const rect = canvas.getBoundingClientRect();
+      return { w: rect.width, h: rect.height };
+    }
+    function plotBox() {
+      const { w, h } = size();
+      return {
+        left: Math.max(62, w * 0.07),
+        right: w - Math.max(38, w * 0.035),
+        top: Math.max(32, h * 0.06),
+        bottom: h - Math.max(42, h * 0.08)
+      };
+    }
+    function toScreen(p) {
+      const b = plotBox();
+      const x = b.left + (p.x - state.xMin) / (state.xMax - state.xMin) * (b.right - b.left);
+      const y = b.bottom - (p.y - state.yMin) / (state.yMax - state.yMin) * (b.bottom - b.top);
+      return { x, y };
+    }
+    function toWorld(p) {
+      const b = plotBox();
+      const x = state.xMin + (p.x - b.left) / (b.right - b.left) * (state.xMax - state.xMin);
+      const y = state.yMin + (b.bottom - p.y) / (b.bottom - b.top) * (state.yMax - state.yMin);
+      return {
+        x: clamp(x, state.xMin + 0.02, state.xMax - 0.02),
+        y: clamp(y, state.yMin + 0.02, state.yMax - 0.02)
+      };
+    }
+    function localPoint(e) {
+      const rect = canvas.getBoundingClientRect();
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    function drawLine(a, b, color, width, dash = []) {
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawArrow(from, to, color, width) {
+      drawLine(from, to, color, width);
+      const ang = Math.atan2(to.y - from.y, to.x - from.x);
+      const s = 18;
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(to.x, to.y);
+      ctx.lineTo(to.x - Math.cos(ang - 0.42) * s, to.y - Math.sin(ang - 0.42) * s);
+      ctx.lineTo(to.x - Math.cos(ang + 0.42) * s, to.y - Math.sin(ang + 0.42) * s);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawAxes() {
+      const b = plotBox();
+      ctx.save();
+      ctx.strokeStyle = "#e3e4e8";
+      ctx.lineWidth = 1;
+      for (let x = Math.ceil(state.xMin); x <= Math.floor(state.xMax); x++) {
+        const a = toScreen({ x, y: state.yMin });
+        const c = toScreen({ x, y: state.yMax });
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.stroke();
+      }
+      for (let y = Math.ceil(state.yMin); y <= Math.floor(state.yMax); y++) {
+        const a = toScreen({ x: state.xMin, y });
+        const c = toScreen({ x: state.xMax, y });
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      const x0 = toScreen({ x: 0, y: 0 });
+      drawArrow(toScreen({ x: state.xMin, y: 0 }), { x: b.right, y: x0.y }, "#3e3e44", 4);
+      drawArrow(toScreen({ x: 0, y: state.yMin }), { x: x0.x, y: b.top }, "#3e3e44", 4);
+
+      ctx.save();
+      ctx.fillStyle = "#3e3e44";
+      ctx.font = "700 28px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (let x = Math.ceil(state.xMin); x <= Math.floor(state.xMax); x++) {
+        if (x === 0) continue;
+        const p = toScreen({ x, y: 0 });
+        ctx.fillText(String(x), p.x, p.y + 31);
+      }
+      for (let y = Math.ceil(state.yMin); y <= Math.floor(state.yMax); y++) {
+        if (y === 0) continue;
+        const p = toScreen({ x: 0, y });
+        ctx.fillText(String(y), p.x - 30, p.y);
+      }
+      ctx.font = "italic 34px Georgia, serif";
+      ctx.fillText("x", b.right - 22, x0.y - 30);
+      ctx.fillText("y", x0.x + 34, b.top + 28);
+      ctx.font = "700 24px Georgia, serif";
+      ctx.fillText("0", x0.x - 27, x0.y + 31);
+      ctx.restore();
+    }
+
+    function drawAngle(origin) {
+      const r = 78;
+      let a = Math.atan2(state.point.y, state.point.x);
+      if (a > Math.PI) a -= Math.PI * 2;
+      if (a < -Math.PI) a += Math.PI * 2;
+      const steps = 72;
+      ctx.save();
+      ctx.fillStyle = "rgba(214,61,115,.16)";
+      ctx.strokeStyle = "#d63d73";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(origin.x, origin.y);
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const ang = a * t;
+        ctx.lineTo(origin.x + Math.cos(ang) * r, origin.y - Math.sin(ang) * r);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const ang = a * t;
+        const x = origin.x + Math.cos(ang) * r;
+        const y = origin.y - Math.sin(ang) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPoint(p) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(107,63,160,.55)";
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 27, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "#6b3fa0";
+      ctx.strokeStyle = "#24152f";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawLabels(screenPoint) {
+      const p = state.point;
+      const label = "(" + fmt(p.x) + ", " + fmt(p.y) + ")";
+      ctx.save();
+      ctx.font = "700 30px Georgia, serif";
+      ctx.fillStyle = "#6b3fa0";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      let lx = screenPoint.x + 22;
+      let ly = screenPoint.y - 28;
+      const { w } = size();
+      if (lx > w - 210) lx = screenPoint.x - 190;
+      ctx.fillText(label, lx, ly);
+      ctx.fillStyle = "#3e3e44";
+      ctx.font = "italic 30px Georgia, serif";
+      const hx = toScreen({ x: p.x / 2, y: p.y }).x;
+      const hy = toScreen({ x: p.x / 2, y: p.y }).y - 20;
+      const vx = toScreen({ x: p.x, y: p.y / 2 }).x + 22;
+      const vy = toScreen({ x: p.x, y: p.y / 2 }).y;
+      ctx.fillText("x", hx, hy);
+      ctx.fillText("y", vx, vy);
+      ctx.restore();
+    }
+
+    function drawCanvasFraction(top, bottom, x, y, size) {
+      ctx.save();
+      ctx.font = "700 " + size + "px Georgia, serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const width = Math.max(ctx.measureText(top).width, ctx.measureText(bottom).width) + 14;
+      ctx.fillText(top, x, y - size * 0.34);
+      ctx.fillText(bottom, x, y + size * 0.48);
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(x - width / 2, y + size * 0.08);
+      ctx.lineTo(x + width / 2, y + size * 0.08);
+      ctx.stroke();
+      ctx.restore();
+      return width;
+    }
+
+    function updateReadout() {
+      const { x, y } = state.point;
+      const atan = Math.abs(x) < 1e-6 ? NaN : deg(Math.atan(y / x));
+      const arg = deg(Math.atan2(y, x));
+      const correction = quadrantCorrection(x, y);
+      zValue.textContent = "z = " + complexText(x, y);
+      atanValue.innerHTML = "arctan(" + fractionHTML("y", "x") + ") = " + angleText(atan) + "<br><span class=\"note\">" + radText(rad(atan)) + "</span>";
+      argValue.innerHTML = "arg z = " + angleText(arg) + "<br><span class=\"note\">" + radText(rad(arg)) + "</span>";
+      let rule;
+      if (Math.abs(x) < 1e-6 && Math.abs(y) < 1e-6) {
+        rule = "At the origin, the argument is undefined because the direction from the origin is not determined.";
+      } else if (x > 0) {
+        rule = "x is positive, so arg z agrees directly with arctan(y/x).";
+      } else if (x < 0 && y >= 0) {
+        rule = "Quadrant II: arctan(y/x) is negative, so " + correction.phrase + " to get the correct argument.";
+      } else if (x < 0 && y < 0) {
+        rule = "Quadrant III: arctan(y/x) is positive, so " + correction.phrase + " to use the standard argument.";
+      } else if (y > 0) {
+        rule = "Positive imaginary axis: arg z = 90°.";
+      } else {
+        rule = "Negative imaginary axis: arg z = -90°.";
+      }
+      ruleValue.textContent = rule;
+    }
+
+    function drawFormulaText() {
+      const { x, y } = state.point;
+      const atan = Math.abs(x) < 1e-6 ? NaN : deg(Math.atan(y / x));
+      const arg = deg(Math.atan2(y, x));
+      const correction = quadrantCorrection(x, y);
+      const b = plotBox();
+      ctx.save();
+      ctx.fillStyle = "#3f3f46";
+      ctx.font = "700 34px Georgia, serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      const x0 = b.left + 6;
+      const y0 = b.top + 10;
+      ctx.fillText("arctan(", x0, y0);
+      const prefixW = ctx.measureText("arctan(").width;
+      drawCanvasFraction("y", "x", x0 + prefixW + 20, y0 + 26, 34);
+      ctx.fillText(") = " + angleText(atan), x0 + prefixW + 50, y0);
+      ctx.font = "700 32px Georgia, serif";
+      ctx.fillText("= " + radText(rad(atan)), x0 + 74, y0 + 48);
+
+      let yLine = y0 + 114;
+      ctx.font = "700 34px Georgia, serif";
+      ctx.fillText("arg z = " + angleText(arg), x0, yLine);
+      ctx.font = "700 30px Georgia, serif";
+      ctx.fillText("= " + radText(rad(arg)), x0 + 74, yLine + 45);
+      if (correction.degrees !== 0) {
+        ctx.fillStyle = "#d63d73";
+        ctx.font = "700 32px Georgia, serif";
+        ctx.fillText(correction.labelDeg + "   (" + correction.labelRad + ")", x0 + 58, yLine + 90);
+      }
+      ctx.restore();
+    }
+
+    function draw() {
+      const rect = canvas.getBoundingClientRect();
+      ctx.clearRect(0, 0, rect.width, rect.height);
+      drawAxes();
+
+      const origin = toScreen({ x: 0, y: 0 });
+      const p = toScreen(state.point);
+      drawAngle(origin);
+      drawLine(origin, p, "#254a9a", 5);
+      drawLine(toScreen({ x: 0, y: state.point.y }), p, "#555", 2.5, [9, 9]);
+      drawLine(toScreen({ x: state.point.x, y: 0 }), p, "#555", 2.5, [9, 9]);
+      drawPoint(p);
+      drawLabels(p);
+      drawFormulaText();
+      updateReadout();
+    }
+
+    function resize() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(rect.width * dpr));
+      canvas.height = Math.max(1, Math.round(rect.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+
+    canvas.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      const p = localPoint(e);
+      const sp = toScreen(state.point);
+      if (Math.hypot(p.x - sp.x, p.y - sp.y) < 46) {
+        state.dragging = true;
+        canvas.setPointerCapture(e.pointerId);
+      }
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!state.dragging) return;
+      e.preventDefault();
+      state.point = toWorld(localPoint(e));
+      draw();
+    });
+    function endDrag() {
+      state.dragging = false;
+    }
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+    canvas.addEventListener("dblclick", (e) => {
+      state.point = toWorld(localPoint(e));
+      draw();
+    });
+    window.addEventListener("resize", resize);
+    resize();
+  </script>
+</body>
+</html>
